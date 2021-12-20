@@ -19,9 +19,11 @@ struct Bn_Ntk_{
 };
 
 int _ID=0;
+map<string,Bn_Node_*>inmap;
 map<string,Bn_Node_*>nodemap;
-Bn_Ntk_ *network=new Bn_Ntk_;
+map<string,Bn_Node_*>outmap;
 
+Bn_Ntk_ *network=new Bn_Ntk_;
 int get_type_int(string gatename){
     if(gatename.find("nand")!=-1||gatename.find("NAND")!=-1)
         return 0;
@@ -35,7 +37,7 @@ int get_type_int(string gatename){
         return 4;
     else if(gatename.find("or")!=-1||gatename.find("or")!=-1)
         return 5;
-    else if(gatename.find("buf")!=-1||gatename.find("buf")!=-1)
+    else if(gatename.find("buf")!=-1||gatename.find("BUF")!=-1)
         return 6;
     else if(gatename.find("not")!=-1||gatename.find("NOT")!=-1)
         return 7;
@@ -70,10 +72,10 @@ string get_type_name(int type_id){
         return "not";
 }
 Bn_Node_ * create_node(string name){
-    Bn_Node_ *tmp ;
+    Bn_Node_ *tmp=nullptr;
     if (nodemap.find(name) != nodemap.end()){
         tmp=nodemap[name];
-        cout <<"duplicate create! node name : "<<name<<endl;
+        //cout <<"duplicate create! node name : "<<name<<endl;
     }
     else{
         tmp=new Bn_Node_;
@@ -110,24 +112,37 @@ vector<string> split(string str,char delim){
     return con;
 }
 
-void print_result(){
+void print_result(ofstream &outfile){
+    int cost=0;
     for (auto i:network->PI_Ary){
-        cout <<"INPUT("<<i->name<<")"<<endl;
+        outfile <<"INPUT("<<i->name<<")"<<endl;
+        cost+=get_cost(6,1);
     }
     for (auto i:network->PO_Ary){
-        cout <<"OUTPUT("<<i->name<<")"<<endl;
+        outfile <<"OUTPUT("<<i->name<<")"<<endl;
+        cost+=get_cost(6,1);
     }
     for (auto i:network->Node_Ary){
-        cout<<i->name<<" = "<<get_type_name(i->FType)<<"(";
-        for (auto j:i->FI_Ary){
-            cout <<j->name<<", ";
+        cost+=get_cost(i->FType,i->FI_Ary.size());
+        outfile<<i->name<<" = "<<get_type_name(i->FType)<<"(";
+        for (auto j=0;j!=i->FI_Ary.size();j++){
+            outfile <<i->FI_Ary[j]->name;
+            if(j!=i->FI_Ary.size()-1){
+                outfile<<", ";
+            }
         }
-        cout<<"\b\b)"<<endl;
+        outfile<<")"<<endl;
     }
+    cout <<"enced cost : "<<cost<<endl;
 }
-void enc(){
+void enc(int enc_bits){
     vector<Bn_Node_ *>XNOR_ARY;
-    for(auto i:network->PI_Ary){
+    vector<Bn_Node_ *>tmp=network->PI_Ary;
+    int num_key=0;
+    vector<Bn_Node_ *>keylist;
+    for(auto i:tmp){
+        if(num_key==enc_bits)
+            break;
         Bn_Node_ *newnode=new Bn_Node_;
         newnode->Id=_ID++;
         newnode->name="XNOR"+to_string(newnode->Id);
@@ -141,34 +156,73 @@ void enc(){
         keynode->FO_Ary.push_back(newnode);
         newnode->FI_Ary.push_back(i);
         newnode->FI_Ary.push_back(keynode);
+        //cout<<i->name<<endl;
+        //cout<<keynode->name<<endl;
         network->Node_Ary.push_back(newnode);
         network->PI_Ary.push_back(keynode);
-
         XNOR_ARY.push_back(newnode);
+        keylist.push_back(keynode);
+        num_key++;
     }
     Bn_Node_ *andnode=new Bn_Node_;
-    andnode->Id=_ID++;
-    andnode->name="AND"+to_string(andnode->Id);
-    andnode->Type=1;
-    andnode->FType=1;
-    andnode->FI_Ary=XNOR_ARY;
-    network->Node_Ary.push_back(andnode);
+    Bn_Node_ *nandnode=new Bn_Node_;
+    Bn_Node_ *andnode2=new Bn_Node_;
 
+    andnode->Id=_ID++;
+    nandnode->Id=_ID++;
+    andnode2->Id=_ID++;
+
+    andnode->name="AND"+to_string(andnode->Id);
+    nandnode->name="NAND"+to_string(nandnode->Id);
+    andnode2->name="AND"+to_string(andnode2->Id);
+
+    andnode->Type=1;
+    nandnode->Type=1;
+    andnode2->Type=1;
+
+    andnode->FType=1;
+    nandnode->FType=0;
+    andnode2->FType=1;
+
+    andnode->FI_Ary=XNOR_ARY;
+    andnode->FO_Ary.push_back(nandnode);
+
+    nandnode->FI_Ary.push_back(keylist[0]);
+    nandnode->FI_Ary.push_back(keylist[1]);
+    
+    andnode2->FI_Ary.push_back(nandnode);
+    andnode2->FI_Ary.push_back(andnode);
+
+    //andnode2->FO_Ary.push_back(nandnode);
+
+    network->Node_Ary.push_back(andnode);
+    network->Node_Ary.push_back(nandnode);
+    network->Node_Ary.push_back(andnode2);
+
+    
+
+    int outbit_usage=0;
     for(auto i:network->PO_Ary){
+        if(inmap.find(i->name)!=inmap.end())
+            continue;
         Bn_Node_ *xornode=new Bn_Node_;
         xornode->Id=_ID++;
         xornode->name=i->name;
         Bn_Node_ *outnode=create_node(i->name);
+        
         outnode->name+="enc";
+
         xornode->Type=1;
         xornode->FType=4;
         xornode->FI_Ary.push_back(outnode);
-        xornode->FI_Ary.push_back(andnode);
+        xornode->FI_Ary.push_back(andnode2);
         network->Node_Ary.push_back(xornode);
-        
+        outbit_usage++;
+        break;
     }
 }
 int main(int argc, char *argv[]){
+    ofstream outfile(argv[2],std::ifstream::out);
     ifstream infile(argv[1],std::ifstream::in);
     if(!infile.is_open()){
         cout <<"file error!\n";
@@ -185,6 +239,8 @@ int main(int argc, char *argv[]){
             tmp->FType=0;//cost 0=1 ; 1=3 ; 2=N-1
             network->PI_Ary.push_back(tmp);
             areacost+=get_cost(6,1);
+            inmap[tmp->name]=tmp;
+            //cout <<tmp<<endl;
         }
         if(instr.find("OUTPUT")!=-1){
             Bn_Node_ *tmp=new Bn_Node_;
@@ -194,6 +250,7 @@ int main(int argc, char *argv[]){
             tmp->FType=0;//cost 0=1 ; 1=3 ; 2=N-1
             network->PO_Ary.push_back(tmp);
             areacost+=get_cost(6,1);
+            outmap[tmp->name]=tmp;
         }
         if(instr.find("=")!=-1){
             string nodename=instr.substr(0,instr.find(" "));
@@ -208,10 +265,18 @@ int main(int argc, char *argv[]){
             areacost+=get_cost(type_id,FI.size());
         }
     }
-    print_result();
-    cout <<"\n====================\n";
-    enc();
-    print_result();
+    //print_result();
+    //cout <<"\n====================\n";
 
-    cout <<"cost"<<areacost<<endl;
+    //6n+1+3*output<=areacost*0.1
+    cout <<"original cost "<<areacost<<endl;
+
+    int enc_bits;
+    while(true){
+        enc_bits=(areacost*0.1-1-3)/5;//5n+1+3*output<=areacost*0.1
+        break;
+    }
+    enc(enc_bits);
+    print_result(outfile);
+    cout <<"enc_bits "<<enc_bits<<endl;
 }
